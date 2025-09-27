@@ -24,6 +24,7 @@ From the **project root directory**, run:
 ```bash
 make clean
 make qemu
+```
 
 ## ▶️ Run Instructions
 Inside the FogOS shell:
@@ -33,6 +34,7 @@ cat [options] [file...]
 If no file is provided, cat reads from standard input.
 
 Multiple options can be combined and multiple files can be listed.
+```
 
 ## 💡 Usage Examples
 ```bash
@@ -48,6 +50,7 @@ $ cat -bE test.txt
 $ echo -e "foo\nbar" | cat -nEs
   1  foo$
   2  bar$
+```
 
 ## ✅ Testing
 
@@ -71,6 +74,7 @@ Files with only blank lines
 Consecutive blank lines
 
 Large files to confirm no performance regressions
+```
 
 ## 📂 Source Files
 - `user/cat.c` — Enhanced implementation of the `cat` command  
