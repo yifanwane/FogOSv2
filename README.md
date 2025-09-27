@@ -17,6 +17,7 @@ This project extends the FogOS/xv6 `cat` utility with several Linux-style option
 Example:
 ```bash
 cat -nEs file.txt
+```
 
 ## 🛠 Build Instructions
 From the **project root directory**, run:
