@@ -1,5 +1,5 @@
 # Project 2: Smash Shell
-**Author**: [Your Name/ID]
+**Author**: Yifan Wan
 
 ## About This Project
 **Smash** (Super Minimal Awesome Shell) is a feature-rich command-line interface designed for the xv6 operating system (RISC-V). It serves as the primary interface between the user and the kernel, replacing the default `sh`.
