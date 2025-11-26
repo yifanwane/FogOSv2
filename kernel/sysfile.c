@@ -354,11 +354,16 @@ sys_open(void)
     f->major = ip->major;
   } else {
     f->type = FD_INODE;
-    f->off = 0;
+    f->off = 0; // <--- 注意这里：系统默认会把它设为 0
   }
+
   f->ip = ip;
   f->readable = !(omode & O_WRONLY);
   f->writable = (omode & O_WRONLY) || (omode & O_RDWR);
+
+  if((omode & O_APPEND) && ip->type == T_FILE){
+      f->off = ip->size;
+  }
 
   if((omode & O_TRUNC) && ip->type == T_FILE){
     itrunc(ip);
@@ -502,4 +507,93 @@ sys_pipe(void)
     return -1;
   }
   return 0;
+}
+
+uint64
+sys_getcwd(void)
+{
+  uint64 addr;
+  int size;
+  struct inode *ip, *parent;
+  struct dirent de;
+  char buf[MAXPATH];
+  char *p;
+  int len;
+  struct proc *proc = myproc();
+
+  // 1. Get arguments
+  // In this kernel version, argaddr/argint return void, so we just call them.
+  argaddr(0, &addr);
+  argint(1, &size);
+
+  // Basic validation
+  if (size <= 0) return -1;
+
+  // 2. Start filling the buffer from the end (backwards)
+  p = buf + MAXPATH - 1;
+  *p = '\0';
+
+  // 3. Get current working directory
+  ip = proc->cwd;
+  idup(ip); // Increment reference count
+
+  // 4. Traverse up to the root
+  if(ip->inum == ROOTINO){
+    *(--p) = '/'; 
+  } else {
+    while(ip->inum != ROOTINO){
+      // A. Find parent inode ("..")
+      ilock(ip);
+      if((parent = dirlookup(ip, "..", 0)) == 0){
+        iunlockput(ip);
+        return -1; 
+      }
+      iunlock(ip);
+
+      // B. Find the name of 'ip' inside 'parent'
+      ilock(parent);
+      int found = 0;
+      uint off;
+      
+      for(off = 0; off < parent->size; off += sizeof(de)){
+        if(readi(parent, 0, (uint64)&de, off, sizeof(de)) != sizeof(de))
+          break;
+        if(de.inum == ip->inum){
+          found = 1;
+          len = strlen(de.name);
+          p -= len;
+          if(p <= buf){ 
+            iunlockput(parent);
+            iput(ip);
+            return -1; // Path too long
+          }
+          memmove(p, de.name, len);
+          *(--p) = '/'; 
+          break;
+        }
+      }
+      iunlock(parent);
+
+      // C. Move up
+      iput(ip); 
+      ip = parent; 
+      
+      if(!found){
+        iput(ip);
+        return -1;
+      }
+    }
+  }
+  
+  iput(ip); // Release root
+
+  // 5. Copy result to user space
+  len = buf + MAXPATH - p;
+  if(len > size) 
+    return -1;
+
+  if(copyout(proc->pagetable, addr, p, len) < 0)
+    return -1;
+
+  return 0; 
 }

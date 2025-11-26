@@ -135,6 +135,7 @@ UPROGS=\
 	$U/_rm\
 	$U/_sh\
 	$U/_stressfs\
+	$U/_sleep\
 	$U/_usertests\
 	$U/_grind\
 	$U/_wc\
@@ -143,6 +144,8 @@ UPROGS=\
 	$U/_forphan\
 	$U/_dorphan\
 	$U/_cat\
+	$U/_myshell\
+	$U/_smash\
 
 fs.img: mkfs/mkfs README.md $(UPROGS) user/test.txt
 	mkfs/mkfs fs.img README.md $(UPROGS) user/test.txt

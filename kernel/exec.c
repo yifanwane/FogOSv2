@@ -9,7 +9,6 @@
 
 static int loadseg(pde_t *, uint64, struct inode *, uint, uint);
 
-// map ELF permissions to PTE permission bits.
 int flags2perm(int flags)
 {
     int perm = 0;
@@ -20,9 +19,6 @@ int flags2perm(int flags)
     return perm;
 }
 
-//
-// the implementation of the exec() system call
-//
 int
 kexec(char *path, char **argv)
 {
@@ -34,28 +30,88 @@ kexec(char *path, char **argv)
   struct proghdr ph;
   pagetable_t pagetable = 0, oldpagetable;
   struct proc *p = myproc();
+  
+  // Counter to prevent infinite recursion
+  int recursion_depth = 0;
 
   begin_op();
 
-  // Open the executable file.
+ retry:
   if((ip = namei(path)) == 0){
     end_op();
     return -1;
   }
   ilock(ip);
 
-  // Read the ELF header.
-  if(readi(ip, 0, (uint64)&elf, 0, sizeof(elf)) != sizeof(elf))
-    goto bad;
+  // --- MODIFIED READ LOGIC START ---
+  // Read the header. Note: Scripts might be smaller than sizeof(elf).
+  int n = readi(ip, 0, (uint64)&elf, 0, sizeof(elf));
+  if(n < 2) 
+    goto bad; // File too short to be anything useful
+  // --- MODIFIED READ LOGIC END ---
 
-  // Is this really an ELF file?
-  if(elf.magic != ELF_MAGIC)
-    goto bad;
+  // Check if it is an ELF file
+  // It must be at least sizeof(elf) AND have the magic number
+  if(n < sizeof(elf) || elf.magic != ELF_MAGIC){
+      // Not an ELF. Check for Shebang (#!).
+      char *hdr = (char*)&elf;
+      if(hdr[0] == '#' && hdr[1] == '!'){
+          if(recursion_depth > 5) {
+              goto bad;
+          }
+          recursion_depth++;
 
+          // Parse interpreter path
+          char interpreter[MAXPATH];
+          int j = 0;
+          int k = 2;
+
+          while(k < n && (hdr[k] == ' ' || hdr[k] == '\t')) k++;
+
+          while(k < n && hdr[k] != '\n' && hdr[k] != '\r' && hdr[k] != 0){
+              if(j < MAXPATH - 1)
+                  interpreter[j++] = hdr[k];
+              k++;
+          }
+          interpreter[j] = 0;
+
+          if(j == 0) goto bad;
+
+          iunlockput(ip);
+          ip = 0;
+
+          // Reconstruct argv
+          int count;
+          for(count = 0; argv[count]; count++);
+
+          if(count >= MAXARG - 1){
+              end_op();
+              return -1;
+          }
+
+          for(int m = count; m >= 0; m--){
+              argv[m+1] = argv[m];
+          }
+
+          char *new_interp_str = kalloc();
+          if(new_interp_str == 0){
+              end_op();
+              return -1;
+          }
+          safestrcpy(new_interp_str, interpreter, PGSIZE);
+          argv[0] = new_interp_str;
+
+          path = new_interp_str;
+          goto retry;
+      }
+      // Not ELF and not Shebang -> Fail
+      goto bad;
+  }
+
+  // --- ELF LOADING LOGIC (Unchanged) ---
   if((pagetable = proc_pagetable(p)) == 0)
     goto bad;
 
-  // Load program into memory.
   for(i=0, off=elf.phoff; i<elf.phnum; i++, off+=sizeof(ph)){
     if(readi(ip, 0, (uint64)&ph, off, sizeof(ph)) != sizeof(ph))
       goto bad;
@@ -81,9 +137,6 @@ kexec(char *path, char **argv)
   p = myproc();
   uint64 oldsz = p->sz;
 
-  // Allocate some pages at the next page boundary.
-  // Make the first inaccessible as a stack guard.
-  // Use the rest as the user stack.
   sz = PGROUNDUP(sz);
   uint64 sz1;
   if((sz1 = uvmalloc(pagetable, sz, sz + (USERSTACK+1)*PGSIZE, PTE_W)) == 0)
@@ -93,13 +146,11 @@ kexec(char *path, char **argv)
   sp = sz;
   stackbase = sp - USERSTACK*PGSIZE;
 
-  // Copy argument strings into new stack, remember their
-  // addresses in ustack[].
   for(argc = 0; argv[argc]; argc++) {
     if(argc >= MAXARG)
       goto bad;
     sp -= strlen(argv[argc]) + 1;
-    sp -= sp % 16; // riscv sp must be 16-byte aligned
+    sp -= sp % 16; 
     if(sp < stackbase)
       goto bad;
     if(copyout(pagetable, sp, argv[argc], strlen(argv[argc]) + 1) < 0)
@@ -108,7 +159,6 @@ kexec(char *path, char **argv)
   }
   ustack[argc] = 0;
 
-  // push a copy of ustack[], the array of argv[] pointers.
   sp -= (argc+1) * sizeof(uint64);
   sp -= sp % 16;
   if(sp < stackbase)
@@ -116,26 +166,21 @@ kexec(char *path, char **argv)
   if(copyout(pagetable, sp, (char *)ustack, (argc+1)*sizeof(uint64)) < 0)
     goto bad;
 
-  // a0 and a1 contain arguments to user main(argc, argv)
-  // argc is returned via the system call return
-  // value, which goes in a0.
   p->trapframe->a1 = sp;
 
-  // Save program name for debugging.
   for(last=s=path; *s; s++)
     if(*s == '/')
       last = s+1;
   safestrcpy(p->name, last, sizeof(p->name));
     
-  // Commit to the user image.
   oldpagetable = p->pagetable;
   p->pagetable = pagetable;
   p->sz = sz;
-  p->trapframe->epc = elf.entry;  // initial program counter = main
-  p->trapframe->sp = sp; // initial stack pointer
+  p->trapframe->epc = elf.entry; 
+  p->trapframe->sp = sp; 
   proc_freepagetable(oldpagetable, oldsz);
 
-  return argc; // this ends up in a0, the first argument to main(argc, argv)
+  return argc; 
 
  bad:
   if(pagetable)
@@ -147,10 +192,6 @@ kexec(char *path, char **argv)
   return -1;
 }
 
-// Load an ELF program segment into pagetable at virtual address va.
-// va must be page-aligned
-// and the pages from va to va+sz must already be mapped.
-// Returns 0 on success, -1 on failure.
 static int
 loadseg(pagetable_t pagetable, uint64 va, struct inode *ip, uint offset, uint sz)
 {
